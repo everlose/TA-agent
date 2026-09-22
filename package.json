@@ -1,7 +1,7 @@
 {
   "name": "ta-agent",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.0.1",
+  "description": "Agent for practice",
   "type": "module",
   "main": "src/index.ts",
   "scripts": {

@@ -9,5 +9,5 @@
     "skipLibCheck": true,
     "types": ["node"]
   },
-  "include": ["agent.simple.ts", "src/**/*.ts"]
+  "include": ["agent.simple.ts", "src/**/*.ts", "test/**/*.ts"]
 }

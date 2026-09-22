@@ -36,6 +36,10 @@ function createRuntime(workdir: string, rl: readline.Interface): AgentLoop {
     if (event.type === "thought") console.log(`\n💭 ${event.data?.content}`);
     if (event.type === "tool_start") console.log(`\n🔧 ${String(event.data?.toolName)}(${(event.data?.args as string[]).join(", ")})`);
     if (event.type === "tool_result") console.log(`\n🔍 ${event.data?.observation}`);
+    if (event.type === "model_retry") {
+      const cause = event.data?.status ? `HTTP ${event.data.status}` : "网络异常或超时";
+      console.log(`\n⏳ ${cause}，${Number(event.data?.delayMs) / 1000}s 后重试（${event.data?.attempt}/${event.data?.maxAttempts}）`);
+    }
     if (event.type === "task_completed") console.log(`\n📋 任务完成：${event.taskId}`);
     if (event.type === "task_failed") console.error(`\n📋 任务失败：${event.data?.message}`);
     if (event.type === "task_cancelled") console.log(`\n📋 任务已取消：${event.taskId}`);

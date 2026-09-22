@@ -54,7 +54,11 @@ export class AgentLoop {
         if (signal?.aborted) throw new DOMException("任务已取消", "AbortError");
         currentStep = step;
         this.publish("step_start", taskId, step, { toolCallCount });
-        const content = await this.model.complete(context.toMessages());
+        // 透传取消信号，并把重试进度按当前步上报，便于实时展示与事后复盘。
+        const content = await this.model.complete(context.toMessages(), {
+          signal,
+          onRetry: (info): void => this.publish("model_retry", taskId, step, { ...info }),
+        });
         this.publish("model_response", taskId, step, { content });
         const thought = content.match(/<thought>(.*?)<\/thought>/s);
         if (thought) this.publish("thought", taskId, step, { content: thought[1].trim() });

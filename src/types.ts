@@ -35,6 +35,7 @@ export type AgentEventType =
   | "task_started"
   | "step_start"
   | "model_response"
+  | "model_retry"
   | "thought"
   | "tool_approval_required"
   | "tool_start"

@@ -5,6 +5,8 @@ import { stdin as input, stdout as output } from "node:process";
 import { loadConfig } from "../config/config-loader.ts";
 import { OpenAIClient } from "../model/openai-client.ts";
 import { AgentLoop } from "../core/agent-loop.ts";
+import { CancellationController } from "../core/cancellation.ts";
+import { bindInterrupts } from "./interrupts.ts";
 import { ToolRegistry } from "../tools/tool-registry.ts";
 import { createBuiltinTools } from "../tools/builtin-tools.ts";
 import { DebugLogger } from "../core/debug-logger.ts";
@@ -56,6 +58,11 @@ export async function startCli(argv: string[] = process.argv.slice(2)): Promise<
   const workdir = path.resolve(argv[0] || ".");
   if (!fs.existsSync(workdir) || !fs.statSync(workdir).isDirectory()) throw new Error(`目录不存在：${workdir}`);
   const rl = readline.createInterface({ input, output, historySize: 1000 });
+  const cancellation = new CancellationController();
+  const unbind = bindInterrupts(cancellation, rl, () => {
+    rl.close();
+    process.exit(0);
+  });
   try {
     const agent = createRuntime(workdir, rl);
     console.log(`Agent 已启动，工作目录：${workdir}\n输入任务，输入 quit 或 exit 退出。`);
@@ -63,8 +70,19 @@ export async function startCli(argv: string[] = process.argv.slice(2)): Promise<
       const question = (await rl.question("\n你 > ")).trim();
       if (["quit", "exit"].includes(question.toLowerCase())) break;
       if (!question) continue;
-      try { console.log(`\n🤖 ${await agent.run(question)}`); }
-      catch (error) { console.error(`\n错误：${(error as Error).message}`); }
+      // 每个任务一个新信号：AbortSignal 一旦 abort 就永久为 aborted，不能跨任务复用。
+      const signal = cancellation.start();
+      try {
+        console.log(`\n🤖 ${await agent.run(question, signal)}`);
+      } catch (error) {
+        // 取消是用户主动行为，task_cancelled 事件已经提示过，这里不再重复报错。
+        if ((error as Error).name !== "AbortError") console.error(`\n错误：${(error as Error).message}`);
+      } finally {
+        cancellation.finish();
+      }
     }
-  } finally { rl.close(); }
+  } finally {
+    unbind();
+    rl.close();
+  }
 }

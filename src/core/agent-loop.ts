@@ -74,6 +74,8 @@ export class AgentLoop {
         const parts = actionMatches[0][1].trim().split("|");
         const toolName = parts.shift()?.trim() || "";
         const args = parts.map((part) => part.trim());
+        // 模型调用期间用户可能刚好按下取消，这里再确认一次，避免白执行一个工具。
+        if (signal?.aborted) throw new DOMException("任务已取消", "AbortError");
         toolCallCount += 1;
         this.publish("tool_start", taskId, step, { toolName, args });
         let observation: string;

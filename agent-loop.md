@@ -26,7 +26,7 @@ for step = 1..maxSteps(20):
 - **上下文**：`ContextManager` 维护 `[system, user(question), assistant, user(observation), ...]`。observation 包成 **user 角色**而非 tool 角色。每次 `run()` 新建，任务间无记忆。
 - **工具清单动态生成**。提示词里的工具列表来自 `ToolRegistry.describeForPrompt()`，避免提示词与注册表两套清单漂移。
 - **解耦与可观测**。Loop 不直接打印，发事件（`step_start`/`thought`/`tool_start`/`tool_result`/`task_completed`…），由 CLI 订阅渲染，同时写 `debug/*.jsonl`。
-- **两个硬边界**：`maxSteps=20` 防死循环，`signal.aborted` 支持取消。
+- **两个硬边界**：`maxSteps=20` 防死循环，`signal.aborted` 支持取消（0.0.3 起由 CLI 的 Ctrl+C 触发）。
 
 ## 二、不足之处
 
@@ -52,6 +52,10 @@ for step = 1..maxSteps(20):
 
 README 列为学习目标，`src/` 下无相关代码。
 
+### 取消覆盖不到工具执行
+
+0.0.3 已把 Ctrl+C 接进 CLI，模型请求与重试等待都能被打断；但 `ToolRegistry.execute` 不接收 signal，`run_terminal_command` 的子进程、以及工具审批的问答都不会中止。此时取消请求会被挂着的工具拖住，只能再按一次 Ctrl+C 强制退出。
+
 ### 靠 prompt 约束而非结构约束
 
 「没真调工具不得声称任务完成」只能写在提示词规则 7 里，靠 `toolCallCount` 事后审计，无法从结构上阻止模型编造。
@@ -64,5 +68,6 @@ README 列为学习目标，`src/` 下无相关代码。
 | 高 | 原生 tool calling | 切到 `tools` / `tool_calls` 字段，参数交给 JSON Schema 校验，消除 `\|` 分隔的妥协 |
 | 中 | 跨任务记忆 | ContextManager 提升到 session 级，或落盘复用 |
 | 中 | 并行工具调用 | 允许一轮多 action，用 `Promise.all` 并发执行 |
+| 中 | 工具级取消 | `ToolContext` 带上 signal，`run_terminal_command` 改用 `spawn` 并在取消时 kill 子进程，审批问答也响应取消 |
 | 低 | 子 Agent | 让 `spawn_agent` 成为一个工具，内部递归复用 AgentLoop |
 | 低 | 协议容错 | 解析失败时回灌一条纠正提示重试，而非直接抛 ProtocolError |

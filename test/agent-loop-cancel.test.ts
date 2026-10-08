@@ -84,6 +84,65 @@ describe("AgentLoop 取消", () => {
     assert.ok(types.includes("task_cancelled"));
   });
 
+  it("工具因取消失败：不降级成 observation，而是冒泡为任务取消", async () => {
+    let receivedSignal: AbortSignal | undefined;
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "slow_tool",
+      description: "挂起直到被取消的测试工具",
+      execute: (_args, context) => {
+        receivedSignal = context.signal;
+        return new Promise<string>((_resolve, reject) => {
+          context.signal?.addEventListener("abort", () => reject(new DOMException("任务已取消", "AbortError")), { once: true });
+        });
+      },
+    });
+    const controller = new AbortController();
+    const model = stubModel(async () => "<thought>跑一下</thought><action>slow_tool|x</action>");
+    const { bus, types } = collectEvents();
+    const agent = new AgentLoop(model, tools, WORKDIR, bus, "session-tool-cancel", 20);
+
+    const running = agent.run("做点什么", controller.signal);
+    // 等循环真正进入工具执行（工具已注册 abort 监听）之后再取消。
+    await new Promise((resolve) => setImmediate(resolve));
+    controller.abort();
+
+    await assert.rejects(running, (error: Error) => error.name === "AbortError");
+    assert.equal(receivedSignal, controller.signal, "ToolContext 应当带上当前任务的取消信号");
+    assert.ok(types.includes("tool_start"));
+    // 关键回归：取消不能被当成「工具执行错误」回灌给模型，否则循环会带着假象继续跑。
+    assert.ok(!types.includes("tool_result"));
+    assert.ok(types.includes("task_cancelled"));
+    assert.ok(!types.includes("task_failed"));
+  });
+
+  it("工具抛出的非 DOMException AbortError 同样算取消", async () => {
+    // 真实场景：readline 的 question(signal) 取消时抛的是 Node 内部 AbortError，
+    // 并不是 DOMException。曾经用 instanceof DOMException 判断，导致取消被
+    // 降级成「工具执行错误」回灌给模型，循环多发一次请求才停（PTY 实测发现）。
+    const tools = new ToolRegistry();
+    tools.register({
+      name: "approval_like_tool",
+      description: "模拟审批问答被取消的测试工具",
+      execute: () => Promise.reject(Object.assign(new Error("The operation was aborted"), { name: "AbortError" })),
+    });
+    const modelCalls = { calls: 0 };
+    const model = stubModel(async () => {
+      modelCalls.calls += 1;
+      return "<thought>跑一下</thought><action>approval_like_tool|x</action>";
+    });
+    const controller = new AbortController();
+    const { bus, types } = collectEvents();
+    const agent = new AgentLoop(model, tools, WORKDIR, bus, "session-plain-abort", 20);
+
+    await assert.rejects(() => agent.run("做点什么", controller.signal), (error: Error) => error.name === "AbortError");
+
+    assert.ok(!types.includes("tool_result"), "取消不应产生 observation");
+    assert.ok(types.includes("task_cancelled"));
+    assert.ok(!types.includes("task_failed"), "取消不能被判成任务失败");
+    assert.equal(modelCalls.calls, 1, "取消后不应再发起模型请求");
+  });
+
   it("信号在任务开始前就已取消：一次模型调用都不发", async () => {
     const modelCalls = { calls: 0 };
     const model = stubModel(async () => {

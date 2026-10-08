@@ -2,6 +2,35 @@
 
 本项目遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/) 与[语义化版本](https://semver.org/lang/zh-CN/)。
 
+## [0.0.4] - 2026-10-08
+
+工具级取消：取消不再被正在执行的工具拖住。
+
+### 新增
+
+- **`ToolContext.signal`**：工具执行时能拿到当前任务的取消信号，慢工具据此自行收尾。
+- **`run_terminal_command` 改用 `spawn`**：取消时按进程组终止整棵进程树，而不是等命令自然结束。
+- **审批问答响应取消**（`src/cli/approval.ts`）：`createApproval` 从 `main.ts` 抽出，`rl.question` 带上信号，按 Ctrl+C 时审批立刻以 `AbortError` 结束，不必先回答 y/n。
+- **`isAbortError()`**（`src/core/errors.ts`）：统一的取消判定。
+- **`CommandToolOptions.timeoutMs`**：可调超时，主要供测试快速触发。
+
+### 修复
+
+- **取消被误判成工具故障**：`agent-loop` 原用 `instanceof DOMException` 判定取消，而 readline 的 `question(signal)` 抛出的是 Node 内部 `AbortError`（并非 `DOMException`）。结果取消被降级成「工具执行错误」回灌给模型，循环多发一次请求才停。改为按 `name` 判定。
+- **杀不干净子进程**：只给 `spawn` 传 `signal` 时，Node 仅杀直接子进程（shell），管道里的孙进程会残留 —— 实测 `sleep 47 | cat` 取消后 `sleep 47` 仍在跑。改为 `detached: true` 让 shell 当进程组组长，按组 `SIGTERM`，500ms 未退再 `SIGKILL`。
+- **超时同样只杀 shell**：`spawn` 自带的 `timeout` 存在同样的覆盖面问题，改为复用同一套整树终止逻辑。
+- **强退留下孤儿命令**：`detached` 的子进程不随父进程退出，新增 `process.on("exit")` 兜底清理，第二次 Ctrl+C 强退时不会留下命令。
+
+### 验证
+
+- 单元测试增至 40 个，新增审批取消、命令取消与整树清理、`ToolContext` 信号透传、非 `DOMException` 取消判定、超时整树终止。
+- PTY 端到端两个场景：审批问答中按 Ctrl+C、命令执行中按 Ctrl+C，均立即回到提示符；取消后无 `sleep` 残留进程。
+
+### 已知边界
+
+- 命令以 `detached` 启动换来整树终止能力，代价是 CLI 若被 `kill -9`，退出钩子来不及执行，命令会成为孤儿。
+- `list_files` / `read_file` 是同步快操作，不检查信号；它们没有可打断的等待点。
+
 ## [0.0.3] - 2026-09-23
 
 把取消能力接进 CLI，端到端取消闭环打通。

@@ -1,5 +1,5 @@
 import { ContextManager } from "./context.ts";
-import { MaxStepsError, ProtocolError } from "./errors.ts";
+import { MaxStepsError, ProtocolError, isAbortError } from "./errors.ts";
 import { buildSystemPrompt } from "./prompt-builder.ts";
 import { EventBus } from "./event-bus.ts";
 import { randomUUID } from "node:crypto";
@@ -80,8 +80,12 @@ export class AgentLoop {
         this.publish("tool_start", taskId, step, { toolName, args });
         let observation: string;
         try {
-          observation = await this.tools.execute(toolName, args, { workdir: this.workdir });
+          // 把取消信号交给工具：长命令与审批问答必须能被打断，否则取消会被工具拖住。
+          observation = await this.tools.execute(toolName, args, { workdir: this.workdir, signal });
         } catch (error) {
+          // 工具因取消而失败时绝不能降级成 observation：那会让循环带着「工具出错」
+          // 的假象继续跑，用户按了 Ctrl+C 却发现停不下来。取消要原样向上冒泡。
+          if (isAbortError(error)) throw error;
           observation = `工具执行错误：${(error as Error).message}`;
         }
         this.publish("tool_result", taskId, step, { toolName, args, observation });
@@ -90,7 +94,7 @@ export class AgentLoop {
       }
       throw new MaxStepsError(`Agent 超过最大步数：${this.maxSteps}`);
     } catch (error) {
-      if (error instanceof DOMException && error.name === "AbortError") {
+      if (isAbortError(error)) {
         if (currentStep !== undefined) this.publish("step_finish", taskId, currentStep, { reason: "cancelled", toolCallCount });
         this.publish("task_cancelled", taskId, undefined, { reason: "abort" });
       } else {

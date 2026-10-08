@@ -22,11 +22,11 @@ for step = 1..maxSteps(20):
 
 - **协议是纯文本，不用原生 tool calling**。模型输出 `<action>list_files|.</action>`，Loop 用正则解析。好处是任何 OpenAI 兼容模型都能跑；代价是解析脆弱。
 - **action 优先于 final_answer**。同一轮里两者都出现时，final 被忽略、action 照常执行，防止模型抢答谎报完成。
-- **工具错误转成 observation**。`agent-loop.ts:78` catch 住异常转字符串回灌，工具失败不打断循环，而是变成模型可自我纠正的输入。
+- **工具错误转成 observation**。catch 住异常转字符串回灌，工具失败不打断循环，而是变成模型可自我纠正的输入。唯一例外是取消：`AbortError` 原样上抛，否则取消会被伪装成工具故障回灌给模型。判定必须用 `isAbortError()`（按 `name` 判），不能 `instanceof DOMException` —— readline 审批取消抛的是 Node 内部 `AbortError`，并非 `DOMException`。
 - **上下文**：`ContextManager` 维护 `[system, user(question), assistant, user(observation), ...]`。observation 包成 **user 角色**而非 tool 角色。每次 `run()` 新建，任务间无记忆。
 - **工具清单动态生成**。提示词里的工具列表来自 `ToolRegistry.describeForPrompt()`，避免提示词与注册表两套清单漂移。
 - **解耦与可观测**。Loop 不直接打印，发事件（`step_start`/`thought`/`tool_start`/`tool_result`/`task_completed`…），由 CLI 订阅渲染，同时写 `debug/*.jsonl`。
-- **两个硬边界**：`maxSteps=20` 防死循环，`signal.aborted` 支持取消（0.0.3 起由 CLI 的 Ctrl+C 触发）。
+- **两个硬边界**：`maxSteps=20` 防死循环，`signal.aborted` 支持取消。取消由 CLI 的 Ctrl+C 触发（0.0.3），并已贯通到模型请求、重试等待、工具执行与命令审批（0.0.4）：`ToolContext.signal` 让工具也能被打断，`run_terminal_command` 取消时按进程组终止整棵进程树。代价是命令以 `detached` 启动，若 CLI 被 `kill -9`，退出兜底钩子来不及执行，命令会成为孤儿。
 
 ## 二、不足之处
 
@@ -41,7 +41,7 @@ for step = 1..maxSteps(20):
 ### 文本协议的解析脆弱性
 
 - 模型少一个闭合标签即失败；
-- 参数用 `|` 分隔，导致参数本身不能含 `|`，`run_terminal_command` 只能 `args.join("|")` 反向拼回管道符（`builtin-tools.ts:45`）；
+- 参数用 `|` 分隔，导致参数本身不能含 `|`，`run_terminal_command` 只能 `args.join("|")` 反向拼回管道符；
 - 无 JSON Schema 级别的参数类型校验。
 
 ### 单步串行，无法并行
@@ -51,10 +51,6 @@ for step = 1..maxSteps(20):
 ### 子 Agent 未实现
 
 README 列为学习目标，`src/` 下无相关代码。
-
-### 取消覆盖不到工具执行
-
-0.0.3 已把 Ctrl+C 接进 CLI，模型请求与重试等待都能被打断；但 `ToolRegistry.execute` 不接收 signal，`run_terminal_command` 的子进程、以及工具审批的问答都不会中止。此时取消请求会被挂着的工具拖住，只能再按一次 Ctrl+C 强制退出。
 
 ### 靠 prompt 约束而非结构约束
 
@@ -68,6 +64,5 @@ README 列为学习目标，`src/` 下无相关代码。
 | 高 | 原生 tool calling | 切到 `tools` / `tool_calls` 字段，参数交给 JSON Schema 校验，消除 `\|` 分隔的妥协 |
 | 中 | 跨任务记忆 | ContextManager 提升到 session 级，或落盘复用 |
 | 中 | 并行工具调用 | 允许一轮多 action，用 `Promise.all` 并发执行 |
-| 中 | 工具级取消 | `ToolContext` 带上 signal，`run_terminal_command` 改用 `spawn` 并在取消时 kill 子进程，审批问答也响应取消 |
 | 低 | 子 Agent | 让 `spawn_agent` 成为一个工具，内部递归复用 AgentLoop |
 | 低 | 协议容错 | 解析失败时回灌一条纠正提示重试，而非直接抛 ProtocolError |

@@ -7,25 +7,13 @@ import { OpenAIClient } from "../model/openai-client.ts";
 import { AgentLoop } from "../core/agent-loop.ts";
 import { CancellationController } from "../core/cancellation.ts";
 import { bindInterrupts } from "./interrupts.ts";
+import { createApproval } from "./approval.ts";
 import { ToolRegistry } from "../tools/tool-registry.ts";
 import { createBuiltinTools } from "../tools/builtin-tools.ts";
 import { DebugLogger } from "../core/debug-logger.ts";
 import { EventBus } from "../core/event-bus.ts";
 import { randomUUID } from "node:crypto";
 import type { AgentEvent } from "../types.ts";
-
-/** 创建危险命令的终端确认回调。 */
-function createApproval(rl: readline.Interface): (command: string) => Promise<boolean> {
-  return async (_command: string): Promise<boolean> => {
-    // 只接受单个 y/Y 或 n/N，其他输入不会改变状态，避免误执行命令。
-    while (true) {
-      const answer = (await rl.question("是否执行此命令？输入 y/Y 执行，n/N 取消：")).trim();
-      if (answer === "y" || answer === "Y") return true;
-      if (answer === "n" || answer === "N") return false;
-      console.log("请输入 y/Y 或 n/N。");
-    }
-  };
-}
 
 /** 创建模型、工具注册表和 Agent Loop，集中完成依赖装配。 */
 function createRuntime(workdir: string, rl: readline.Interface): AgentLoop {

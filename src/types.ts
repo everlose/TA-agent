@@ -12,9 +12,14 @@ export interface AgentTool {
   execute: (args: string[], context: ToolContext) => Promise<string> | string;
 }
 
+/** 危险命令的终端确认回调；signal 让审批问答本身也能被取消。 */
+export type CommandApproval = (command: string, signal?: AbortSignal) => Promise<boolean>;
+
 /** 工具执行时可获得的运行时上下文。 */
 export interface ToolContext {
   workdir: string;
+  /** 当前任务的取消信号。慢工具必须响应它，否则取消会被工具拖住。 */
+  signal?: AbortSignal;
 }
 
 /** Agent Loop 向 CLI 发布的可观察事件。 */
